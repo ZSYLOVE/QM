@@ -1,0 +1,9 @@
+{
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "cmake.sourceDirectory": "D:/vscode/flutter/onlin/linux",
+    "code-runner.enableAppInsights": false,
+    "telemetry.feedback.enabled": false,
+    "telemetry.editStats.details.enabled": false,
+    "telemetry.editStats.enabled": false,
+    "search.followSymlinks": false
+}
