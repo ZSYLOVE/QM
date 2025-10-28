@@ -354,6 +354,9 @@ class _EmptyTimetablePageState extends State<EmptyTimetablePage> {
     if (selectedSemester.semId != 'default') {
       _ensureSemesterWeeksLoaded(selectedSemester);
     }
+    
+    // 重新检查缓存状态
+    _checkCacheStatus();
   }
 
   Future<void> _saveTimetableData() async {
