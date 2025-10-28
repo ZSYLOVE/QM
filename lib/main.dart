@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_downloader/flutter_downloader.dart';
-import 'package:onlin/screens/login_page.dart';
 import 'package:onlin/screens/priate_center.dart';
+import 'package:onlin/screens/empty_timetable_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_screen.dart';
 import 'screens/chat_listScreen.dart';
@@ -53,7 +53,7 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
                 onScrollExpand: () => setNavBarCollapsed(false),
               ),
               _CollapsibleScrollTab(
-                child:LoginPage(),
+                child: EmptyTimetablePage(timetableJson: null),
                 onScrollCollapse: () => setNavBarCollapsed(true),
                 onScrollExpand: () => setNavBarCollapsed(false),
               ),

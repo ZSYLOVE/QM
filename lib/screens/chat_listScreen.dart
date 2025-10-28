@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 // ignore: undefined_shown_name
 import 'dart:io' show InternetAddress, PathSetting, SocketException, join;
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:onlin/globals.dart';
 import 'package:onlin/screens/FriendRequestsScreen.dart';
 import 'package:onlin/screens/chat_screen.dart';
@@ -48,7 +49,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
   Map<String, int> unreadMessageCounts = {}; // email -> count
   Map<String, String?> avatarCache = {}; // 用于缓存头像链接
   bool _wasDisconnected = false;
-
+  final LocalAuthentication auth = LocalAuthentication();
+  bool isFingerprintEnabled = false; // 存储指纹登录状态
+  BuildContext? _currentContext;
 
   @override
   void initState() {
@@ -61,13 +64,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
     // socketService.onCallInvite = _onCallInvite;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       //如果已启用指纹登录，进入页面时自动触发验证
-      // SharedPreferences prefs = await SharedPreferences.getInstance();
-      // if (prefs.getBool('fingerprint_enabled') ?? false) {
-      //   bool isAuthenticated = await _authenticate();
-      //   if (!isAuthenticated) {
-      //     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-      //   }
-      // }
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('fingerprint_enabled') ?? false) {
+        bool isAuthenticated = await _authenticate();
+        if (!isAuthenticated) {
+          Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+        }
+      }
       _initializeData();
     });
     _loadPinnedFriends();
@@ -129,7 +132,38 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
+Future<bool> _authenticate() async {
+    try {
+      bool authenticated = await auth.authenticate(
+        localizedReason: '请验证您的指纹以继续',
+        options: const AuthenticationOptions(
+          useErrorDialogs: true,
+          stickyAuth: true,
+        ),
+      );
 
+      if (!authenticated) {
+        if (_currentContext != null && mounted) {
+          ScaffoldMessenger.of(_currentContext!).showSnackBar(
+            SnackBar(content: Text('指纹验证失败')),
+          );
+        }
+        if (!mounted) return false;
+        Navigator.pushNamedAndRemoveUntil(_currentContext!, '/login', (route) => false);
+      }
+
+      return authenticated;
+
+    } catch (e) {
+      print(e);
+      if (_currentContext != null && mounted) {
+        ScaffoldMessenger.of(_currentContext!).showSnackBar(
+          SnackBar(content: Text('指纹验证失败')),
+        );
+      }
+      return false;
+    }
+  }
   // 从后端加载好友列表
   void _loadFriends() async {
     if (currentUserEmail == null) return;

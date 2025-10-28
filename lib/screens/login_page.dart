@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:onlin/screens/timetable_page.dart';
+import 'package:onlin/screens/empty_timetable_page.dart';
 import 'package:onlin/servers/api_serverclass.dart';
 import 'package:onlin/servers/cache_service.dart';
 
 
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final bool returnData;
+  const LoginPage({super.key, this.returnData = false});
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
@@ -21,10 +22,12 @@ class _LoginPageState extends State<LoginPage> {
   String? captchaBase64;
   bool loading = false;
   String? errorMsg;
+  bool rememberCredentials = false;
 
   @override
   void initState() {
     super.initState();
+    _loadRememberedCredentials();
     _tryLoadCacheThenCaptcha();
   }
 
@@ -34,15 +37,18 @@ class _LoginPageState extends State<LoginPage> {
       errorMsg = null;
     });
     try {
-      final cached = await CacheService.loadTimetable();
-      if (cached != null && mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => TimetablePage(timetableJson: cached),
-          ),
-        );
-        return;
+      // 只有在不是从其他页面调用时才自动跳转
+      if (!widget.returnData) {
+        final cached = await CacheService.loadTimetable();
+        if (cached != null && mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EmptyTimetablePage(timetableJson: cached),
+            ),
+          );
+          return;
+        }
       }
     } catch (_) {}
     finally {
@@ -119,18 +125,37 @@ class _LoginPageState extends State<LoginPage> {
         'username': _userController.text,
         'password': _passController.text,
         'captcha': _captchaController.text,
-        'session_id': sessionId ?? '',
+        'session_id': sessionId ?? resp['session_id'] ?? '',
       });
+      
+      // 保存记住的账号密码
+      await CacheService.saveRememberedCredentials(
+        _userController.text,
+        _passController.text,
+        rememberCredentials,
+      );
       setState(() {
         loading = false;
       });
       if (context.mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => TimetablePage(timetableJson: resp),
-          ),
-        );
+        if (widget.returnData) {
+          // 如果是从空白页调用的，返回数据
+          print('🔄 登录成功，返回课表数据到空白页');
+          print('返回的数据结构: $resp');
+          
+          // 提取并保存周次信息
+          await _extractWeekInfoFromMetadata(resp);
+          
+          Navigator.pop(context, resp);
+        } else {
+          // 正常跳转到空白课表页面（替代原来的timetable_page）
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EmptyTimetablePage(timetableJson: resp),
+            ),
+          );
+        }
       }
     } else {
       setState(() {
@@ -259,10 +284,32 @@ class _LoginPageState extends State<LoginPage> {
                             _buildInputField(
                               controller: _passController,
                               label: "密码",
-                    
                               icon: Icons.lock,
                               obscureText: true,
                               enabled: !loading,
+                            ),
+                            const SizedBox(height: 10),
+                            // 记住账号密码复选框（右对齐）
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                const Text(
+                                  '记住账号密码',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                Checkbox(
+                                  value: rememberCredentials,
+                                  onChanged: loading ? null : (value) {
+                                    setState(() {
+                                      rememberCredentials = value ?? false;
+                                    });
+                                  },
+                                  activeColor: const Color.fromARGB(255, 235, 115, 107),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 15),
                             if (isCaptchaReady) ...[
@@ -394,6 +441,40 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     );
+  }
+
+  // 加载记住的账号密码
+  Future<void> _loadRememberedCredentials() async {
+    try {
+      final credentials = await CacheService.loadRememberedCredentials();
+      if (credentials != null) {
+        setState(() {
+          _userController.text = credentials['username'] ?? '';
+          _passController.text = credentials['password'] ?? '';
+          rememberCredentials = credentials['remember'] ?? false;
+        });
+        print('✅ 已加载保存的账号密码');
+      }
+    } catch (e) {
+      print('❌ 加载保存的账号密码失败: $e');
+    }
+  }
+  Future<void> _extractWeekInfoFromMetadata(Map<String, dynamic> metadata) async {
+    try {
+      final currentWeekInfo = metadata['current_week_info'] as Map<String, dynamic>?;
+      if (currentWeekInfo != null) {
+        print('📅 从登录元数据提取周次信息: $currentWeekInfo');
+        await CacheService.saveCurrentWeekInfo(currentWeekInfo);
+        
+        // 验证保存
+        final savedInfo = await CacheService.loadCurrentWeekInfo();
+        print('📊 验证保存的周次信息: $savedInfo');
+      } else {
+        print('⚠️ 登录元数据中没有周次信息');
+      }
+    } catch (e) {
+      print('❌ 从登录元数据提取周次信息失败: $e');
+    }
   }
 }
 
