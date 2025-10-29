@@ -8,6 +8,8 @@ import 'package:onlin/baseUrl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:onlin/servers/message.dart';
 import 'package:onlin/utils/network_utils.dart';
+import 'package:onlin/services/token_expired_service.dart';
+import 'package:flutter/material.dart';
 
 class ApiService {
   
@@ -76,8 +78,8 @@ class ApiService {
 
   // 发送消息
   Future<Map<String, dynamic>?> sendMessage({
-    required String senderId,
-    required String receiverId,
+    required String senderEmail,
+    required String receiverEmail,
     String? audioUrl,
     String? content,
     String? imageUrl,
@@ -92,21 +94,21 @@ class ApiService {
     String? locationAddress,
   }) async {
     try {
-      print('发送消息请求: senderId=$senderId, receiverId=$receiverId, content=$content');
+      print('发送消息请求: senderEmail=$senderEmail, receiverEmail=$receiverEmail, content=$content');
       
       final response = await http.post(
         Uri.parse('${Baseurl.baseUrl}/messages/sendMessage'),
-        headers: await getHeaders(), // 使用认证头
+        headers: await getHeaders(),
         body: jsonEncode({
-          'senderId': senderId,
-          'receiverId': receiverId,
-          'audioUrl': audioUrl,
+          'senderEmail': senderEmail,  
+          'receiverEmail': receiverEmail,  
           'content': content ?? '',
           'imageUrl': imageUrl,
           'videoUrl': videoUrl,
           'fileUrl': fileUrl,
           'fileName': fileName,
           'fileSize': fileSize,
+          'audioUrl': audioUrl,
           'audioDuration': audioDuration,
           'videoDuration': videoDuration,
           'latitude': latitude,
@@ -132,6 +134,22 @@ class ApiService {
           return {'success': false, 'error': '响应数据格式错误'};
         }
       } else {
+        // 检查Token过期
+        if (response.statusCode == 401) {
+          try {
+            final errorData = json.decode(response.body);
+            if (errorData['code'] == 'TOKEN_EXPIRED') {
+              print('🔒 Token已过期，需要重新登录');
+              return {'success': false, 'error': 'TOKEN_EXPIRED', 'code': 'TOKEN_EXPIRED'};
+            }
+          } catch (e) {
+            // 解析失败，检查响应体内容
+            if (response.body.contains('Token已过期')) {
+              print('🔒 Token已过期，需要重新登录');
+              return {'success': false, 'error': 'TOKEN_EXPIRED', 'code': 'TOKEN_EXPIRED'};
+            }
+          }
+        }
         print('消息发送失败: ${response.statusCode} - ${response.body}');
         return {'success': false, 'error': '服务器错误: ${response.statusCode}'};
       }
@@ -142,10 +160,11 @@ class ApiService {
   }
 
   // 获取好友列表
-  Future<List<Map<String, dynamic>>> getFriendsList(String userId) async {
+  Future<List<Map<String, dynamic>>> getFriendsList(String userEmail) async {
     try {
       final response = await http.get(
-        Uri.parse('${Baseurl.baseUrl}/api/friends/list/$userId'),
+        Uri.parse('${Baseurl.baseUrl}/api/friends/list/$userEmail'),
+        headers: await getHeaders(),
       );
 
       if (response.statusCode == 200) {
@@ -161,12 +180,12 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>?> sendFriendRequest(String userId, String friendEmail) async {
+  Future<Map<String, dynamic>?> sendFriendRequest(String userEmail, String friendEmail) async {
     try {
       final response = await http.post(
         Uri.parse('${Baseurl.baseUrl}/api/friends/request'),  
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'userId': userId, 'friendEmail': friendEmail}),
+        headers: await getHeaders(),
+        body: json.encode({'userId': userEmail, 'friendEmail': friendEmail}),
       );
 
       // 如果状态码是 200，表示请求成功
@@ -187,9 +206,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getFriendRequests(String userEmail) async {
     final response = await http.post(
       Uri.parse('${Baseurl.baseUrl}/api/friends/requests'), 
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: await getHeaders(),
       body: json.encode({
         'userEmail': userEmail,
       }),
@@ -208,14 +225,14 @@ class ApiService {
   }
 
   // 接受好友请求
-  Future<Map<String, dynamic>?> acceptFriendRequest(String userId, String friendId) async {
+  Future<Map<String, dynamic>?> acceptFriendRequest(String userEmail, String friendEmail) async {
     try {
       final response = await http.post(
         Uri.parse('${Baseurl.baseUrl}/api/friends/accept'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await getHeaders(),
         body: jsonEncode({
-          'userId': userId,
-          'friendId': friendId,
+          'userId': userEmail,  // userId 就是 userEmail
+          'friendId': friendEmail,  // friendId 就是 friendEmail
         }),
       );
 
@@ -233,12 +250,12 @@ class ApiService {
   }
 
   // 拒绝好友请求
-  Future<Map<String, dynamic>?> rejectFriendRequest(String userId, String friendId) async {
+  Future<Map<String, dynamic>?> rejectFriendRequest(String userEmail, String friendEmail) async {
     try {
       final response = await http.post(
         Uri.parse('${Baseurl.baseUrl}/api/friends/reject'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'userId': userId, 'friendId': friendId}),
+        headers: await getHeaders(),
+        body: json.encode({'userId': userEmail, 'friendId': friendEmail}),
       );
 
       if (response.statusCode == 200) {
@@ -317,14 +334,14 @@ class ApiService {
   }
 
   // 获取聊天历史
-  Future<List<Message>> getChatHistory(String userId, String friendId) async {
+  Future<List<Message>> getChatHistory(String userEmail, String friendEmail) async {
     try {
-      print('Fetching chat history for user $userId with friend $friendId');
+      print('Fetching chat history for user $userEmail with friend $friendEmail');
       
-      final uri = Uri.parse('${Baseurl.baseUrl}/messages/history/$userId')
+      final uri = Uri.parse('${Baseurl.baseUrl}/messages/history/$userEmail')
           .replace(queryParameters: {
-        'otherUserId': friendId,
-        '_t': DateTime.now().millisecondsSinceEpoch.toString(), // 禁用缓存  
+        'otherUserId': friendEmail, 
+        '_t': DateTime.now().millisecondsSinceEpoch.toString(), // 禁用缓存   
       });
 
       print('Requesting URL: $uri');
@@ -362,7 +379,7 @@ class ApiService {
               print('  - 完整消息数据: $msg');
             }
             
-            return Message.fromJson(msg, userId);
+            return Message.fromJson(msg, userEmail);
           } catch (e) {
             print('Error parsing message: $msg');
             print('Error details: $e');
@@ -374,6 +391,22 @@ class ApiService {
         .toList()
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp)); // 按时间顺序排序
       } else {
+        // 检查Token过期
+        if (response.statusCode == 401) {
+          try {
+            final errorData = json.decode(response.body);
+            if (errorData['code'] == 'TOKEN_EXPIRED') {
+              print('🔒 Token已过期，需要重新登录');
+              throw Exception('TOKEN_EXPIRED');
+            }
+          } catch (e) {
+            // 解析失败，检查响应体内容
+            if (response.body.contains('Token已过期')) {
+              print('🔒 Token已过期，需要重新登录');
+              throw Exception('TOKEN_EXPIRED');
+            }
+          }
+        }
         print('Error response: ${response.body}');
         throw Exception('Failed to load chat history: ${response.statusCode}');
       }
@@ -400,7 +433,7 @@ class ApiService {
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: await getHeaders(),
         body: jsonEncode({
           'userEmail': userEmail,
           'friendEmail': friendEmail,
@@ -418,13 +451,13 @@ class ApiService {
     }
   }
   
-  Future<Map<String, dynamic>> updateAvatar(String avatarUrl, String userId) async {
+  Future<Map<String, dynamic>> updateAvatar(String avatarUrl, String userEmail) async {
     try {
       print('Sending request to update avatar: $avatarUrl'); // 调试信息
       var response = await http.post(
         Uri.parse('${Baseurl.baseUrl}/auth/change-avatar'),
         headers: await getHeaders(),
-        body: jsonEncode({'avatarUrl': avatarUrl, 'userId': userId}), 
+        body: jsonEncode({'avatarUrl': avatarUrl, 'userId': userEmail}), 
       );
       print('Response status: ${response.statusCode}'); // 调试信息
       print('Response body: ${response.body}'); // 调试信息
@@ -444,7 +477,7 @@ class ApiService {
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: await getHeaders(),
         body: jsonEncode({
           'userEmail': userEmail,
           'friendEmail': friendEmail,
@@ -509,8 +542,8 @@ class ApiService {
       try {
         final uri = Uri.parse('${Baseurl.baseUrl}/messages/unreadcount').replace(
           queryParameters: {
-            'userId': userEmail,
-            'friendId': friendEmail,
+            'userId': userEmail,  // userId 就是 userEmail
+            'friendId': friendEmail,  // friendId 就是 friendEmail
             '_t': DateTime.now().millisecondsSinceEpoch.toString(), // 添加防缓存参数
           },
         );
@@ -531,19 +564,19 @@ class ApiService {
         return {'unreadCount': 0};
       }
     }
-  // 标记消息为已读的方法
- Future<bool> markMessagesAsRead(String userId, String friendId) async {
+// 标记消息为已读的方法
+Future<bool> markMessagesAsRead(String userEmail, String friendEmail) async {
   // 添加参数验证（防御性编程）
-  if (userId.isEmpty || friendId.isEmpty) {
-    print('⚠️ 无效参数: userId=$userId, friendId=$friendId');
+  if (userEmail.isEmpty || friendEmail.isEmpty) {
+    print('⚠️ 无效参数: userEmail=$userEmail, friendEmail=$friendEmail');
     return false;
   }
 
   try {
     final uri = Uri.parse('${Baseurl.baseUrl}/messages/markAsRead').replace(
       queryParameters: {
-        'userId': userId,
-        'friendId': friendId,
+        'userId': userEmail,  // userId 就是 userEmail
+        'friendId': friendEmail,  // friendId 就是 friendEmail
         '_t': DateTime.now().millisecondsSinceEpoch.toString(),
       },
     );
@@ -642,6 +675,10 @@ class ApiService {
 
         final uri = Uri.parse('${Baseurl.baseUrl}/messages/upload');
         final request = http.MultipartRequest('POST', uri);
+
+        // 添加认证头
+        final headers = await getHeaders();
+        request.headers.addAll(headers);
 
         // 添加文件
         request.files.add(await http.MultipartFile.fromPath('file', file.path));
@@ -788,13 +825,13 @@ Future<Map<String, dynamic>?> getUserInfo(String email) async {
 }
 
   // 撤回消息
-  Future<bool> revokeMessage(int messageId, String userId) async {
+  Future<bool> revokeMessage(int messageId, String userEmail) async {
     final url = Uri.parse('${Baseurl.baseUrl}/messages/$messageId/revoke');
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'userId': userId}),
+        headers: await getHeaders(),
+        body: jsonEncode({'userId': userEmail}),
       );
       print('撤回响应: ${response.statusCode} ${response.body}');
       return response.statusCode == 200;
@@ -805,13 +842,13 @@ Future<Map<String, dynamic>?> getUserInfo(String email) async {
   }
 
   // 删除消息
-  Future<bool> deleteMessage(int messageId, String userId) async {
+  Future<bool> deleteMessage(int messageId, String userEmail) async {
     final url = Uri.parse('${Baseurl.baseUrl}/messages/$messageId/delete');
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'userId': userId}),
+        headers: await getHeaders(),
+        body: jsonEncode({'userId': userEmail}),
       );
       return response.statusCode == 200;
     } catch (e) {

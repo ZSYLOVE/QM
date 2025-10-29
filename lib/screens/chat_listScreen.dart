@@ -19,6 +19,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:onlin/components/update_component.dart';
 import 'package:onlin/services/all_friends_notification_service.dart';
+import 'package:onlin/services/token_expired_service.dart';
 
 
 class ChatListScreen extends StatefulWidget {
@@ -193,6 +194,14 @@ Future<bool> _authenticate() async {
     } catch (e) {
       setState(() { isLoading = false; });
       print('Error loading friends list: $e');
+      
+      // 检查是否是Token过期错误
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return;
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('加载好友列表失败'))
       );
@@ -222,16 +231,39 @@ Future<bool> _authenticate() async {
     // 打印请求的数据，检查是否正确
     print("Sending friend request to $email with userId $userId");
 
-    var response = await apiService.sendFriendRequest(userId!, email);
+    try {
+      var response = await apiService.sendFriendRequest(userId!, email);
 
-    setState(() {
-      isLoading = false;
-    });
+      setState(() {
+        isLoading = false;
+      });
 
-    if (response != null && response['message'] == 'Friend request sent') {
-      // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Friend request sent!')));
-    } else {
+      // 检查Token过期
+      if (response != null && response['code'] == 'TOKEN_EXPIRED') {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return;
+      }
+
+      if (response != null && response['message'] == 'Friend request sent') {
+        // ignore: use_build_context_synchronously
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Friend request sent!')));
+      } else {
+        // ignore: use_build_context_synchronously
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to send friend request')));
+      }
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      
+      // 检查是否是Token过期错误
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return;
+      }
+      
       // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to send friend request')));
     }
@@ -514,6 +546,14 @@ Future<void> _fetchUnreadMessageCount() async {
       return response['unreadCount'] ?? 0;
     } catch (e) {
       print('Error fetching unread message count for $friendEmail: $e');
+      
+      // 检查是否是Token过期错误
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return 0;
+      }
+      
       return 0;
     }
   }
@@ -1011,18 +1051,31 @@ Future<void> _fetchUnreadMessageCount() async {
   }
 
   Future<String?> _getAvatar(String email) async {
-    // 清除缓存
-    avatarCache.remove(email); // 每次获取头像之前先删除缓存
+    try {
+      // 清除缓存
+      avatarCache.remove(email); // 每次获取头像之前先删除缓存
 
-    // 调用 apiService 获取头像链接
-    final response = await apiService.getUserAvatar(email);
-    if (response != null && response['avatar'] != null) {
-      String avatarUrl = response['avatar'];
-      avatarCache[email] = avatarUrl; // 缓存头像链接
-      return avatarUrl; // 返回新的头像链接
+      // 调用 apiService 获取头像链接
+      final response = await apiService.getUserAvatar(email);
+      if (response != null && response['avatar'] != null) {
+        String avatarUrl = response['avatar'];
+        avatarCache[email] = avatarUrl; // 缓存头像链接
+        return avatarUrl; // 返回新的头像链接
+      }
+
+      return null; // 如果没有头像链接，返回 null
+    } catch (e) {
+      print('Error getting avatar for $email: $e');
+      
+      // 检查是否是Token过期错误
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return null;
+      }
+      
+      return null;
     }
-
-    return null; // 如果没有头像链接，返回 null
   }
 
   @override

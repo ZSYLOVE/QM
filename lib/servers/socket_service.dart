@@ -43,14 +43,14 @@ class SocketService {
     return _isConnected && _socket != null && !_isConnecting;
   }
 
-  Future<bool> connectSocket(String userId, String token) async {
+  Future<bool> connectSocket(String userEmail, String token) async {
   if (_isConnecting) {
     print('Connection already in progress...');
     return false;
   }
 
-  if (_isConnected && _socket != null && _currentUserId == userId) {
-    print('Already connected for user: $userId');
+  if (_isConnected && _socket != null && _currentUserId == userEmail) {
+    print('Already connected for user: $userEmail');
     return true;
   }
 
@@ -60,18 +60,19 @@ class SocketService {
 
     await _cleanupExistingConnection();
     
-    print('Initializing new socket connection for user: $userId');
-    _currentUserId = userId;
+    print('Initializing new socket connection for user: $userEmail');
+    _currentUserId = userEmail;
 
     if (token.isNotEmpty) {   
       print("'token': $token");
       
-      // 每次连接前确保初始化一个新的连接
+      // 🔧 更新：使用新的认证方式，支持 auth.token 和 query.token
       _socket = IO.io(Baseurl.baseUrl, <String, dynamic>{
         'transports': ['websocket'],
         'autoConnect': false,
-        'query': {'token': token,'userId':userId},  // 传递最新的 token
-        'forceNew': true,  // 关键！！！！强制创建新连接，避免复用
+        'auth': {'token': token},  // 主要认证方式
+        'query': {'token': token}, // 备用认证方式
+        'forceNew': true,  // 强制创建新连接，避免复用
         'reconnection': false, 
         'timeout': 10000,      
         'pingInterval': 25000,
@@ -338,7 +339,7 @@ class SocketService {
     }
   }
 
-  Future<bool> sendMessage(String senderId, String receiverId, String content, 
+  Future<bool> sendMessage(String senderEmail, String receiverEmail, String content, 
   String image_url, String? audioUrl, int audioDuration,
    {String? videoUrl, String? fileUrl, String? fileName, String? fileSize, int? videoDuration, 
     double? latitude, double? longitude, String? locationAddress}) async {
@@ -357,15 +358,16 @@ class SocketService {
       }
     }
 
-    if (senderId != _currentUserId) {
-      print('Sender ID mismatch: current=$_currentUserId, sender=$senderId');
+    if (senderEmail != _currentUserId) {
+      print('Sender email mismatch: current=$_currentUserId, sender=$senderEmail');
       return false;
     }
 
     try {
+      // 🔧 更新：使用新的消息格式 senderEmail/receiverEmail
       final messageData = {
-        'senderId': senderId,
-        'receiverId': receiverId,
+        'senderEmail': senderEmail,
+        'receiverEmail': receiverEmail,
         'content': content,
         'imageUrl': image_url,
         'audioUrl': audioUrl,

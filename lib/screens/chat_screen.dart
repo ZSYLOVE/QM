@@ -25,6 +25,7 @@ import 'package:onlin/services/friend_notification_service.dart';
 import 'package:onlin/services/all_friends_notification_service.dart';
 import 'package:onlin/services/location_service.dart';
 import 'package:onlin/screens/location_picker_screen.dart';
+import 'package:onlin/services/token_expired_service.dart';
 // 时间转换工具
 class TimeUtils {
   static DateTime parseUtcToLocal(String utcTime) {
@@ -377,6 +378,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       print('Error loading chat history: $e');
+      
+      // 检查是否是Token过期错误
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        print('🔒 检测到Token过期，显示重新登录对话框');
+        TokenExpiredService.instance.showTokenExpiredDialog(context);
+        return;
+      }
+      
       if (mounted) {
         setState(() {
           isLoading = false;
@@ -748,10 +757,17 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     // 调用API发送消息
     var response = await apiService.sendMessage(
-      senderId: userEmail,
-      receiverId: friendEmail,
+      senderEmail: userEmail,
+      receiverEmail: friendEmail,
       content: content,
     );
+    
+    // 检查Token过期
+    if (response != null && response['code'] == 'TOKEN_EXPIRED') {
+      print('🔒 检测到Token过期，显示重新登录对话框');
+      TokenExpiredService.instance.showTokenExpiredDialog(context);
+      return;
+    }
     
     if (response != null && response['success'] != false) {
       //发送成功时，创建消息对象
@@ -1356,13 +1372,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
                 if (selected == 'revoke') {
                   await Future.delayed(Duration(milliseconds: 200));
-                  final now = DateTime.now().toUtc();
-                  final beijingTime = now.add(Duration(hours: 8));
-                  print('撤回消息：${beijingTime}');
+                  final now = DateTime.now(); // 使用本地时间
+                  print('撤回消息：${now}');
                   print('撤回消息${message.timestamp}');
-                  final diff = beijingTime.difference(message.timestamp);
-                  print('撤回检查: 当前UTC=$beijingTime, 消息时间=${message.timestamp}, 差值=${diff.inSeconds}秒');
-                  if (diff.inMinutes >= 2||diff.inSeconds < 0) {
+                  final diff = now.difference(message.timestamp);
+                  print('撤回检查: 当前本地时间=$now, 消息时间=${message.timestamp}, 差值=${diff.inSeconds}秒');
+                  if (diff.inMinutes >= 2 || diff.inSeconds < 0) {
                     ScaffoldMessenger.of(pageContext).showSnackBar(
                       SnackBar(content: Text('只能在2分钟内撤回消息')),
                     );
@@ -2322,8 +2337,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ));
           });
           final response = await apiService.sendMessage(
-            senderId: userEmail,
-            receiverId: friendEmail,
+            senderEmail: userEmail,
+            receiverEmail: friendEmail,
             audioUrl: audioUrl,
             content: '',
             audioDuration: recordingSeconds,
@@ -2349,8 +2364,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 messages[idx] = Message(
                   id: response['messageId'] ?? response['id'],
                   content: response['content'],
-                  senderId: response['senderId'],
-                  receiverId: response['receiverId'],
+                  senderId: response['senderEmail'] ?? userEmail, 
+                  receiverId: response['receiverEmail'] ?? friendEmail, 
                   timestamp: TimeUtils.parseUtcToLocal(response['timestamp']),
                   isMe: true,
                   audioUrl: response['audioUrl'],
@@ -2476,8 +2491,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
       });
       var response = await apiService.sendMessage(
-        senderId: userEmail,
-        receiverId: friendEmail,
+        senderEmail: userEmail,
+        receiverEmail: friendEmail,
         content: '',
         imageUrl: imageUrl,
         audioUrl: '',
@@ -2502,8 +2517,8 @@ class _ChatScreenState extends State<ChatScreen> {
             messages[idx] = Message(
               id: response['messageId'] ?? response['id'],
               content: response['content'],
-              senderId: response['senderId'],
-              receiverId: response['receiverId'],
+              senderId: response['senderEmail'] ?? userEmail,
+              receiverId: response['receiverEmail'] ?? friendEmail,
               timestamp: now,
               isMe: true,
               audioUrl: response['audioUrl'],
@@ -2636,8 +2651,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
       });
       var response = await apiService.sendMessage(
-        senderId: userEmail,
-        receiverId: friendEmail,
+        senderEmail: userEmail,
+        receiverEmail: friendEmail,
         content: '',
         videoUrl: videoUrl,
         fileName: fileName,
@@ -2671,8 +2686,8 @@ class _ChatScreenState extends State<ChatScreen> {
             messages[idx] = Message(
               id: response['messageId'] ?? response['id'],
               content: response['content'],
-              senderId: response['senderId'],
-              receiverId: response['receiverId'],
+              senderId: response['senderEmail'] ?? userEmail,
+              receiverId: response['receiverEmail'] ?? friendEmail,
               timestamp: now,
               isMe: true,
               audioUrl: response['audioUrl'],
@@ -3002,8 +3017,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
       });
       var response = await apiService.sendMessage(
-        senderId: userEmail,
-        receiverId: friendEmail,
+        senderEmail: userEmail,
+        receiverEmail: friendEmail,
         content: '',
         fileUrl: fileUrl,
         fileName: fileName,
@@ -3037,8 +3052,8 @@ class _ChatScreenState extends State<ChatScreen> {
             messages[idx] = Message(
               id: response['messageId'] ?? response['id'],
               content: response['content'],
-              senderId: response['senderId'],
-              receiverId: response['receiverId'],
+              senderId: response['senderEmail'] ?? userEmail,
+              receiverId: response['receiverEmail'] ?? friendEmail,
               timestamp:now,
               isMe: true,
               audioUrl: response['audioUrl'],
@@ -3260,8 +3275,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // 调用API发送位置消息
       print('DEBUG: 发送位置消息到API - 纬度: $latitude, 经度: $longitude, 地址: $address');
       var response = await apiService.sendMessage(
-        senderId: userEmail,
-        receiverId: friendEmail,
+        senderEmail: userEmail,
+        receiverEmail: friendEmail,
         content: locationContent,
         latitude: latitude,
         longitude: longitude,
