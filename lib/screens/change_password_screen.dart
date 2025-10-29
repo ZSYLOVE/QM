@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:onlin/servers/api_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:onlin/services/token_manager.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -30,11 +30,22 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   Future<void> _changePassword() async {
     if (!_formKey.currentState!.validate()) return;
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+    // 从TokenManager读取用户信息（加密存储）
+    final userInfo = await TokenManager.instance.getUserInfo();
     setState(() {
       _isLoading = true;
-      email = prefs.getString('email')!;
+      email = userInfo['email'] ?? '';
     });
+
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法获取用户信息')),
+      );
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
 
     try {
       final apiService = ApiService();
@@ -49,10 +60,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           const SnackBar(content: Text('密码修改成功')),
         );
         
-        // 清除当前用户的登录状态
-        await prefs.remove('token');
-        await prefs.remove('email');
-        await prefs.remove('username');
+        // 清除当前用户的登录状态（使用TokenManager）
+        await TokenManager.instance.clearAll();
 
         // 导航到登录界面并传递email
         Navigator.pushNamedAndRemoveUntil(

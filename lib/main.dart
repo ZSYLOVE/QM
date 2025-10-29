@@ -10,6 +10,8 @@ import 'screens/register_screen.dart';
 import 'servers/api_service.dart';
 import 'services/friend_notification_service.dart';
 import 'services/all_friends_notification_service.dart';
+import 'services/token_manager.dart';
+import 'services/token_refresh_manager.dart';
 
 class MainTabScaffold extends StatefulWidget {
   @override
@@ -172,6 +174,12 @@ Future<void> main() async {
   // Initialize local storage
   await SharedPreferences.getInstance();
   
+  // Initialize TokenManager（加载token到内存缓存）
+  await TokenManager.instance.initialize();
+  
+  // Token自动刷新机制将在_checkLoginStatus验证成功后启动
+  // 不需要在这里启动，避免重复启动
+  
   // Initialize friend notification service
   await FriendNotificationService.instance.initialize();
   // Initialize all friends notification service
@@ -183,21 +191,61 @@ Future<void> main() async {
 class MyApp extends StatelessWidget {
   final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
   Future<bool> _checkLoginStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    print('🔎 登录状态检查 | Token存在: ${prefs.getString('token') != null}');
-    final token = prefs.getString('token');
-    final email = prefs.getString('email');
+    // 使用TokenManager检查token
+    final hasToken = await TokenManager.instance.hasToken();
+    print('🔎 登录状态检查 | Token存在: $hasToken');
 
-    if (token != null && email != null) {
-      // 如果用户已登录，获取最新用户信息
+    if (hasToken) {
+      // 专门的Token验证接口
       final apiService = ApiService();
-      final userInfo = await apiService.getUserInfo(email);
-      if (userInfo != null) {
-        print('✅ 已更新用户信息');
-        return true;
+      try {
+        final result = await apiService.verifyToken();
+        if (result != null && result['success'] == true && result['valid'] == true) {
+          print('✅ Token验证成功');
+          
+          // 启动Token自动刷新机制（如果尚未运行）
+          if (!TokenRefreshManager.instance.isRunning) {
+            TokenRefreshManager.instance.start(intervalMinutes: 25);
+          }
+          
+          // 更新用户信息
+          final email = result['email'];
+          if (email != null) {
+            final userInfo = await apiService.getUserInfo(email);
+            if (userInfo != null) {
+              print('✅ 已更新用户信息');
+            }
+          }
+          return true;
+        } else {
+          // Token无效、过期或未登录
+          final code = result?['code'];
+          if (code == 'NO_TOKEN') {
+            print('🔒 用户未登录');
+          } else if (code == 'TOKEN_EXPIRED') {
+            print('🔒 Token已过期，清除登录数据');
+          } else {
+            print('🔒 Token无效或过期，清除登录数据');
+          }
+          // 使用TokenManager清除（同步清除内存和加密存储）
+          await TokenManager.instance.clearAll();
+          return false;
+        }
+      } catch (e) {
+        // 如果Token过期，清除登录数据
+        if (e.toString().contains('TOKEN_EXPIRED')) {
+          print('🔒 Token已过期，清除登录数据');
+          await TokenManager.instance.clearAll();
+        } else if (e.toString().contains('Token is null') || e.toString().contains('NO_TOKEN')) {
+          print('🔒 用户未登录');
+        }
+        return false;
       }
+    } else {
+      // Token为空，用户未登录
+      print('🔒 Token为空，用户未登录');
+      return false;
     }
-    return false;
   }
 
   @override

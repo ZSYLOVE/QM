@@ -8,7 +8,6 @@ import 'package:local_auth/local_auth.dart';
 import 'package:onlin/globals.dart';
 import 'package:onlin/screens/FriendRequestsScreen.dart';
 import 'package:onlin/screens/chat_screen.dart';
-import 'package:onlin/screens/priate_center.dart';
 import 'package:onlin/servers/api_service.dart';
 import 'package:onlin/servers/socket_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +19,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:onlin/components/update_component.dart';
 import 'package:onlin/services/all_friends_notification_service.dart';
 import 'package:onlin/services/token_expired_service.dart';
+import 'package:onlin/services/token_manager.dart';
 
 
 class ChatListScreen extends StatefulWidget {
@@ -111,17 +111,19 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   void _initializeData() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+    // 从TokenManager读取用户信息（加密存储）
+    final userInfo = await TokenManager.instance.getUserInfo();
     setState(() {
-      currentUserEmail = prefs.getString('email');
-      currentUsername = prefs.getString('username') ?? '用户';
-      currentUserAvatar = prefs.getString('avatar');
+      currentUserEmail = userInfo['email'];
+      currentUsername = userInfo['username'] ?? '用户';
+      currentUserAvatar = userInfo['avatar'];
       // isFingerprintEnabled = prefs.getBool('fingerprint_enabled') ?? false; // 获取指纹登录状态
     });
     
     print('🔍 本地存储数据 | Email: $currentUserEmail | 用户名: $currentUsername | 头像: $currentUserAvatar');
 
-    String? token = prefs.getString('token');
+    // 从TokenManager获取token
+    String? token = await TokenManager.instance.getToken();
     if (token != null && currentUserEmail != null) {
       bool connected = await socketService.connectSocket(currentUserEmail!, token);
       if (connected) {
@@ -508,11 +510,12 @@ Future<void> _fetchUnreadMessageCount() async {
 
   // 初始化 Socket 连接
   void _initSocket() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? email = prefs.getString('email');
-    String? token = prefs.getString('token');
-    if (email != null) {
-         bool connected = await socketService.connectSocket(email,token!);
+    // 从TokenManager读取用户信息（加密存储）
+    final userInfo = await TokenManager.instance.getUserInfo();
+    String? email = userInfo['email'];
+    String? token = await TokenManager.instance.getToken();
+    if (email != null && token != null) {
+         bool connected = await socketService.connectSocket(email, token);
         if (connected) {
           print('Socket connected');
         } else {

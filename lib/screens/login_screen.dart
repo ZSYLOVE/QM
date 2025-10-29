@@ -7,7 +7,6 @@ import 'package:onlin/servers/api_service.dart';
 import 'package:onlin/servers/socket_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../components/update_component.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:onlin/screens/terms_of_service_screen.dart';
@@ -260,14 +259,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleLoginSuccess(Map<String, dynamic> response) async {
-    // 保存 token 到 SharedPreferences
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', response['token']);
-    await prefs.setString('email', response['email']);
-    await prefs.setString('username', response['username']);
-    await prefs.setString('avatar', response['avatar'] ?? ''); // 确保存储 avatar
-
-    print('🔑 登录凭证 | Token: ${response['token']?.substring(0, 10)}...');
+    // Token和用户信息已由ApiService.login保存到TokenManager（加密存储）
+    // 无需再次保存
+    
+    print('🔑 登录凭证 | Token: ${response['token']?.toString().substring(0, 10)}...');
     print('👤 用户信息 | Email: ${response['email']} | 用户名: ${response['username']}');
     await _disposeCamera(); // 登录成功后关闭摄像头
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'package:onlin/services/token_manager.dart';
+import 'package:onlin/services/token_refresh_manager.dart';
 
 class TokenExpiredService {
   static final TokenExpiredService _instance = TokenExpiredService._internal();
@@ -24,11 +26,8 @@ class TokenExpiredService {
   bool isTokenExpiredFromResponse(int statusCode, String responseBody) {
     if (statusCode == 401) {
       try {
-        final response = Map<String, dynamic>.from(
-          Uri.parse('data:application/json,$responseBody').data?.contentAsBytes() != null 
-            ? {} 
-            : {}
-        );
+        // 尝试解析JSON响应
+        final response = Map<String, dynamic>.from(json.decode(responseBody));
         return isTokenExpired(response);
       } catch (e) {
         // 如果解析失败，检查响应体是否包含Token过期信息
@@ -91,11 +90,12 @@ class TokenExpiredService {
   // 清除登录数据
   Future<void> _clearLoginData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('token');
-      await prefs.remove('email');
-      await prefs.remove('username');
-      await prefs.remove('avatar');
+      // 停止Token刷新机制
+      TokenRefreshManager.instance.stop();
+      
+      // 使用TokenManager清除（同步清除内存和加密存储）
+      await TokenManager.instance.clearAll();
+      
       print('✅ 已清除本地登录数据');
     } catch (e) {
       print('❌ 清除登录数据失败: $e');

@@ -5,11 +5,10 @@ import 'dart:io';
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:onlin/baseUrl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:onlin/servers/message.dart';
 import 'package:onlin/utils/network_utils.dart';
-import 'package:onlin/services/token_expired_service.dart';
-import 'package:flutter/material.dart';
+import 'package:onlin/services/token_manager.dart';
+import 'package:onlin/services/token_refresh_manager.dart';
 
 class ApiService {
   
@@ -66,7 +65,16 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        await _saveLoginData(data['token'], data['email'], data['username'], data['avatar'] ?? '');
+        // 使用TokenManager保存（加密存储 + 内存缓存）
+        await TokenManager.instance.saveToken(data['token']);
+        await TokenManager.instance.saveUserInfo(
+          email: data['email'],
+          username: data['username'],
+          avatar: data['avatar'] ?? '',
+        );
+        
+        print('✅ 已存储用户数据 | Token: ${data['token']?.toString().isNotEmpty} | Email: ${data['email']} | 用户名: ${data['username']} | 头像: ${data['avatar']}');
+        
         return data;
       }
       return null;
@@ -167,6 +175,23 @@ class ApiService {
         headers: await getHeaders(),
       );
 
+      // 检查Token过期
+      if (response.statusCode == 401) {
+        try {
+          final errorData = json.decode(response.body);
+          if (errorData['code'] == 'TOKEN_EXPIRED') {
+            print('🔒 Token已过期，需要重新登录');
+            throw Exception('TOKEN_EXPIRED');
+          }
+        } catch (e) {
+          // 解析失败，检查响应体内容
+          if (response.body.contains('Token已过期')) {
+            print('🔒 Token已过期，需要重新登录');
+            throw Exception('TOKEN_EXPIRED');
+          }
+        }
+      }
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return List<Map<String, dynamic>>.from(data['friends']);
@@ -176,6 +201,10 @@ class ApiService {
       }
     } catch (e) {
       print('Error getting friends list: $e');
+      // 如果是Token过期异常，重新抛出
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        rethrow;
+      }
       return [];
     }
   }
@@ -187,6 +216,23 @@ class ApiService {
         headers: await getHeaders(),
         body: json.encode({'userId': userEmail, 'friendEmail': friendEmail}),
       );
+
+      // 检查Token过期
+      if (response.statusCode == 401) {
+        try {
+          final errorData = json.decode(response.body);
+          if (errorData['code'] == 'TOKEN_EXPIRED') {
+            print('🔒 Token已过期，需要重新登录');
+            return {'code': 'TOKEN_EXPIRED'};
+          }
+        } catch (e) {
+          // 解析失败，检查响应体内容
+          if (response.body.contains('Token已过期')) {
+            print('🔒 Token已过期，需要重新登录');
+            return {'code': 'TOKEN_EXPIRED'};
+          }
+        }
+      }
 
       // 如果状态码是 200，表示请求成功
       if (response.statusCode == 200) {
@@ -269,33 +315,24 @@ class ApiService {
     }
   }
 
-  // 保存登录数据到SharedPreferences
-  Future<void> _saveLoginData(String token, String email, String username, String avatar) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', token);
-    await prefs.setString('email', email);
-    await prefs.setString('username', username);
-    await prefs.setString('avatar', avatar);
-    print('✅ 已存储用户数据 | Token: ${token.isNotEmpty} | Email: $email | 用户名: $username | 头像: $avatar');
-  }
-
-  // 从SharedPreferences读取token和email
+  // 从TokenManager读取登录数据（使用加密存储）
   Future<Map<String, String>?> getLoginData() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? token = prefs.getString('token');
-    String? email = prefs.getString('email');
-    String? username = prefs.getString('username');
-    String? avatar = prefs.getString('avatar');
-    if (token != null && email != null && username != null&& avatar != null) {
-      return {
-        'token': token,
-        'email': email,
-        'username':username,
-        'avatar':avatar,
-      };
-    } else {
-      return null; // 如果没有保存数据，返回null
+    // 从TokenManager读取（加密存储）
+    if (await TokenManager.instance.hasToken()) {
+      final token = await TokenManager.instance.getToken();
+      final userInfo = await TokenManager.instance.getUserInfo();
+      
+      if (token != null && userInfo['email'] != null && userInfo['username'] != null) {
+        return {
+          'token': token,
+          'email': userInfo['email']!,
+          'username': userInfo['username']!,
+          'avatar': userInfo['avatar'] ?? '',
+        };
+      }
     }
+    
+    return null; // 如果没有保存数据，返回null
   }
 
   // 获取好友信息
@@ -417,11 +454,31 @@ class ApiService {
   }
 
   Future<Map<String, String>> getHeaders() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? token = prefs.getString('token');
+    // 使用TokenManager获取token（优先从内存读取）
+    String? token = await TokenManager.instance.getToken();
+    
     if (token == null) {
       throw Exception('Token is null');
     }
+    
+    // 检查token是否即将过期，如果是则自动刷新
+    if (TokenManager.instance.isTokenExpiringSoon(token)) {
+      print('🔄 Token即将过期，自动刷新...');
+      try {
+        final refreshed = await TokenRefreshManager.instance.refreshNow();
+        if (refreshed) {
+          // 刷新成功，重新获取token
+          token = await TokenManager.instance.getToken();
+          if (token == null) {
+            throw Exception('Token is null after refresh');
+          }
+        }
+      } catch (e) {
+        print('⚠️ Token自动刷新失败: $e');
+        // 继续使用旧token，如果过期会在后续请求中处理
+      }
+    }
+    
     return {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $token',
@@ -553,6 +610,23 @@ class ApiService {
           headers: await getHeaders(),
         );
 
+        // 检查Token过期
+        if (response.statusCode == 401) {
+          try {
+            final errorData = json.decode(response.body);
+            if (errorData['code'] == 'TOKEN_EXPIRED') {
+              print('🔒 Token已过期，需要重新登录');
+              throw Exception('TOKEN_EXPIRED');
+            }
+          } catch (e) {
+            // 解析失败，检查响应体内容
+            if (response.body.contains('Token已过期')) {
+              print('🔒 Token已过期，需要重新登录');
+              throw Exception('TOKEN_EXPIRED');
+            }
+          }
+        }
+
         if (response.statusCode == 200) {
           return json.decode(response.body);
         } else {
@@ -561,6 +635,10 @@ class ApiService {
         }
       } catch (e) {
         print('获取未读消息计数异常: $e');
+        // 如果是Token过期异常，重新抛出
+        if (e.toString().contains('TOKEN_EXPIRED')) {
+          rethrow;
+        }
         return {'unreadCount': 0};
       }
     }
@@ -609,6 +687,23 @@ Future<bool> markMessagesAsRead(String userEmail, String friendEmail) async {
         headers: await getHeaders(),
       );
 
+      // 检查Token过期
+      if (response.statusCode == 401) {
+        try {
+          final errorData = json.decode(response.body);
+          if (errorData['code'] == 'TOKEN_EXPIRED') {
+            print('🔒 Token已过期，需要重新登录');
+            throw Exception('TOKEN_EXPIRED');
+          }
+        } catch (e) {
+          // 解析失败，检查响应体内容
+          if (response.body.contains('Token已过期')) {
+            print('🔒 Token已过期，需要重新登录');
+            throw Exception('TOKEN_EXPIRED');
+          }
+        }
+      }
+
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       } else {
@@ -616,6 +711,10 @@ Future<bool> markMessagesAsRead(String userEmail, String friendEmail) async {
       }
     } catch (e) {
       print('Error fetching user avatar: $e');
+      // 如果是Token过期异常，重新抛出
+      if (e.toString().contains('TOKEN_EXPIRED')) {
+        rethrow;
+      }
       return null;
     }
   }
@@ -803,6 +902,130 @@ Future<bool> markMessagesAsRead(String userEmail, String friendEmail) async {
   }
 
 
+  // 刷新Token
+  Future<Map<String, dynamic>?> refreshToken() async {
+    try {
+      // 获取当前用户信息
+      final userInfo = await TokenManager.instance.getUserInfo();
+      final email = userInfo['email'];
+      
+      if (email == null || email.isEmpty) {
+        print('❌ 无法刷新Token: 用户邮箱不存在');
+        return null;
+      }
+      
+      // 调用刷新接口
+      final response = await http.post(
+        Uri.parse('${Baseurl.baseUrl}/auth/refresh-token'),
+        headers: {
+          'Content-Type': 'application/json',
+          // 使用旧token（如果存在）
+          if (await TokenManager.instance.hasToken())
+            'Authorization': 'Bearer ${await TokenManager.instance.getToken()}',
+        },
+        body: jsonEncode({'email': email}),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['token'] != null) {
+          // 保存新Token
+          await TokenManager.instance.saveToken(data['token']);
+          
+          // 更新用户信息（如果有）
+          if (data['email'] != null || data['username'] != null) {
+            await TokenManager.instance.saveUserInfo(
+              email: data['email'] ?? email,
+              username: data['username'] ?? userInfo['username'] ?? '',
+              avatar: data['avatar'] ?? userInfo['avatar'],
+            );
+          }
+          
+          print('✅ Token刷新成功');
+          return data;
+        }
+      } else {
+        print('❌ Token刷新失败: ${response.statusCode} - ${response.body}');
+      }
+      
+      return null;
+    } catch (e) {
+      print('❌ Token刷新异常: $e');
+      return null;
+    }
+  }
+
+// 验证Token是否有效
+Future<Map<String, dynamic>?> verifyToken() async {
+  try {
+    // 先检查token是否存在（使用TokenManager）
+    String? token = await TokenManager.instance.getToken();
+    
+    if (token == null || token.isEmpty) {
+      print('🔒 Token为空，用户未登录');
+      return {
+        'success': false,
+        'valid': false,
+        'code': 'NO_TOKEN',
+        'error': '未登录'
+      };
+    }
+
+    final response = await http.get(
+      Uri.parse('${Baseurl.baseUrl}/auth/verify-token'),
+      headers: await getHeaders(),
+    );
+
+    // 检查Token过期
+    if (response.statusCode == 401) {
+      try {
+        final errorData = json.decode(response.body);
+        if (errorData['code'] == 'TOKEN_EXPIRED') {
+          print('🔒 Token已过期，需要重新登录');
+          return {'success': false, 'valid': false, 'code': 'TOKEN_EXPIRED', 'error': 'Token已过期'};
+        }
+        if (errorData['code'] == 'NO_TOKEN') {
+          print('🔒 未提供Token，用户未登录');
+          return {'success': false, 'valid': false, 'code': 'NO_TOKEN', 'error': '未登录'};
+        }
+      } catch (e) {
+        // 解析失败，检查响应体内容
+        if (response.body.contains('Token已过期')) {
+          print('🔒 Token已过期，需要重新登录');
+          return {'success': false, 'valid': false, 'code': 'TOKEN_EXPIRED', 'error': 'Token已过期'};
+        }
+        if (response.body.contains('未提供') || response.body.contains('未登录')) {
+          print('🔒 未提供Token，用户未登录');
+          return {'success': false, 'valid': false, 'code': 'NO_TOKEN', 'error': '未登录'};
+        }
+      }
+      return {'success': false, 'valid': false, 'code': 'INVALID_TOKEN', 'error': 'Token无效'};
+    }
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data;
+    } else {
+      print('Token验证失败: ${response.statusCode} - ${response.body}');
+      return {'success': false, 'valid': false, 'error': '验证失败'};
+    }
+  } catch (e) {
+    print('Error verifying token: $e');
+    
+    // 检查是否是Token过期错误
+    if (e.toString().contains('TOKEN_EXPIRED')) {
+      return {'success': false, 'valid': false, 'code': 'TOKEN_EXPIRED', 'error': 'Token已过期'};
+    }
+    
+    // 检查是否是Token为空错误
+    if (e.toString().contains('Token is null') || e.toString().contains('NO_TOKEN')) {
+      return {'success': false, 'valid': false, 'code': 'NO_TOKEN', 'error': '未登录'};
+    }
+    
+    return {'success': false, 'valid': false, 'error': '网络错误'};
+  }
+}
+
 // 获取用户信息的方法
 Future<Map<String, dynamic>?> getUserInfo(String email) async {
   try {
@@ -810,17 +1033,44 @@ Future<Map<String, dynamic>?> getUserInfo(String email) async {
       Uri.parse('${Baseurl.baseUrl}/auth/userinfo?email=$email'),
       headers: await getHeaders(),
     );
+    
+    // 检查Token过期
+    if (response.statusCode == 401) {
+      try {
+        final errorData = json.decode(response.body);
+        if (errorData['code'] == 'TOKEN_EXPIRED') {
+          print('🔒 Token已过期，需要重新登录');
+          throw Exception('TOKEN_EXPIRED');
+        }
+      } catch (e) {
+        // 解析失败，检查响应体内容
+        if (response.body.contains('Token已过期')) {
+          print('🔒 Token已过期，需要重新登录');
+          throw Exception('TOKEN_EXPIRED');
+        }
+      }
+    }
+    
     final storedData = await getLoginData();
     final data = jsonDecode(response.body);
-    if (response.statusCode == 200 && storedData?['token'] != data['token'] ||
-        storedData?['avatar'] != data['avatar'] || storedData?['username'] != data['username']) {
-      await _saveLoginData(data['token'], data['email'], data['username'], data['avatar'] ?? '');
+    
+    if (response.statusCode == 200) {
+      // 只更新用户信息，不更新Token
+      if (storedData?['avatar'] != data['avatar'] || storedData?['username'] != data['username']) {
+        // 使用TokenManager更新用户信息
+        await TokenManager.instance.saveUserInfo(
+          email: data['email'] ?? storedData?['email'] ?? '',
+          username: data['username'] ?? storedData?['username'] ?? '',
+          avatar: data['avatar'] ?? storedData?['avatar'] ?? '',
+        );
+        return data;
+      }
       return data;
     }
     return null;
   } catch (e) {
     print('Error getting user info: $e');
-    return null;
+    rethrow; // 重新抛出异常，让调用者处理
   }
 }
 

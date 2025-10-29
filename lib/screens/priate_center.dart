@@ -8,6 +8,7 @@ import 'package:onlin/servers/api_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:onlin/services/token_manager.dart';
 
 class PrivateCenterScreen extends StatefulWidget {
   const PrivateCenterScreen({super.key});
@@ -38,11 +39,13 @@ class _PrivateCenterScreenState extends State<PrivateCenterScreen> {
   }
 
   void _initializeData() async {
+    // 从TokenManager读取用户信息（加密存储）
+    final userInfo = await TokenManager.instance.getUserInfo();
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      currentUserEmail = prefs.getString('email');
-      currentUsername = prefs.getString('username') ?? '用户';
-      currentUserAvatar = prefs.getString('avatar');
+      currentUserEmail = userInfo['email'];
+      currentUsername = userInfo['username'] ?? '用户';
+      currentUserAvatar = userInfo['avatar'];
       isFingerprintEnabled = prefs.getBool('fingerprint_enabled') ?? false;
     });
     
@@ -267,8 +270,14 @@ class _PrivateCenterScreenState extends State<PrivateCenterScreen> {
                       setState(() {
                         currentUserAvatar = newAvatarUrl;
                       });
-                      SharedPreferences prefs = await SharedPreferences.getInstance();
-                      await prefs.setString('avatar', newAvatarUrl);
+                      // 使用TokenManager更新用户信息（加密存储）
+                      if (currentUserEmail != null && currentUsername != null) {
+                        await TokenManager.instance.saveUserInfo(
+                          email: currentUserEmail!,
+                          username: currentUsername!,
+                          avatar: newAvatarUrl,
+                        );
+                      }
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('头像更新成功')),
                       );
